@@ -9,3 +9,6 @@
 | 2026-02-03 | Weekly proactive maintenance | Maintenance templates exist in repo (assumption) | Ad-hoc only | Regular cleanup cadence |
 | 2026-02-03 | Git-based auto-apply with rollback, no secrets handling | Repo is the system of record (assumption) | Direct edits without git | Safer changes; requires git hygiene |
 | 2026-02-03 | Local-first now, possible remote later | Tunnel is listed as future (assumption) | Remote-first now | Simpler setup; plan for future exposure |
+
+## ADR Index
+- ADR-0001 — `vault/architecture/decisions/ADR-0001-initial-architecture-decisions.md`
