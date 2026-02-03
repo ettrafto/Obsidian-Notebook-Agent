@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime
+import re
 
 VAULT_PATH = Path("/vault").resolve()
 LOG_PATH = Path("/logs/agent.log").resolve()
@@ -36,6 +37,63 @@ class AppendNote(BaseModel):
 class Command(BaseModel):
     text: str  # e.g. "run weekly maintenance" (MVP logs + writes a report)
 
+class Query(BaseModel):
+    question: str
+
+
+def _anchor_for_heading(heading: str) -> str:
+    slug = heading.strip().lower()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"\s+", "-", slug)
+    return f"#{slug}"
+
+
+def _extract_section(text: str, heading: str) -> str:
+    lines = text.splitlines()
+    start_idx = None
+    for i, line in enumerate(lines):
+        if line.strip().lower() == heading.lower():
+            start_idx = i + 1
+            break
+    if start_idx is None:
+        return ""
+    out = []
+    for line in lines[start_idx:]:
+        if line.startswith("#"):
+            break
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def _headings(text: str):
+    headings = []
+    for line in text.splitlines():
+        if line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            title = line.strip("#").strip()
+            headings.append((level, title))
+    return headings
+
+
+def _excerpt_under_heading(text: str, heading: str) -> str:
+    lines = text.splitlines()
+    start_idx = None
+    for i, line in enumerate(lines):
+        if line.strip().lower() == heading.lower():
+            start_idx = i + 1
+            break
+    if start_idx is None:
+        return ""
+    excerpt_lines = []
+    for line in lines[start_idx:]:
+        if line.startswith("#"):
+            break
+        if line.strip():
+            excerpt_lines.append(line.strip())
+        if len(excerpt_lines) >= 3:
+            break
+    return " ".join(excerpt_lines).strip()
+
 
 @app.get("/health")
 def health():
@@ -66,12 +124,87 @@ def note_append(req: AppendNote):
 @app.post("/command")
 def command(req: Command):
     # MVP behavior: write a simple report note + log.
+    text = req.text or ""
+    stripped = text.lstrip()
+    if stripped.lower().startswith("capture:"):
+        payload = stripped[len("capture:"):].strip()
+        if not payload:
+            raise HTTPException(status_code=400, detail="Capture payload is required")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        inbox_path = _ensure_inside_vault(Path("inbox/inbox.md"))
+        inbox_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = f"\n- [{now}] {payload}\n"
+        existing = inbox_path.read_text(encoding="utf-8") if inbox_path.exists() else "# Inbox Log\n"
+        inbox_path.write_text(existing + entry, encoding="utf-8")
+        _log(f"CAPTURE {payload}")
+        return {"ok": True, "captured_to": "inbox/inbox.md"}
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     report_path = _ensure_inside_vault(Path("system/agent-runs.md"))
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    entry = f"\n- [{now}] {req.text}\n"
+    entry = f"\n- [{now}] {text}\n"
     existing = report_path.read_text(encoding="utf-8") if report_path.exists() else "# Agent Runs\n"
     report_path.write_text(existing + entry, encoding="utf-8")
-    _log(f"COMMAND {req.text}")
+    _log(f"COMMAND {text}")
     return {"ok": True, "logged_to": "system/agent-runs.md"}
+
+
+@app.post("/query")
+def query(req: Query):
+    question = (req.question or "").strip()
+    arch_path = _ensure_inside_vault(Path("architecture/ARCHITECTURE.md"))
+    decisions_path = _ensure_inside_vault(Path("architecture/DECISIONS.md"))
+
+    arch_text = arch_path.read_text(encoding="utf-8") if arch_path.exists() else ""
+    decisions_text = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+
+    q_lower = question.lower()
+    if "components" in q_lower or "responsibilities" in q_lower:
+        section = _extract_section(arch_text, "## Components")
+        excerpt = _excerpt_under_heading(arch_text, "## Components")
+        return {
+            "answer": section or "Not found",
+            "citations": [
+                {
+                    "path": "vault/architecture/ARCHITECTURE.md",
+                    "anchor": _anchor_for_heading("Components"),
+                    "quote": excerpt or "## Components",
+                }
+            ] if section else []
+        }
+
+    if "where is" in q_lower or "defined" in q_lower:
+        if "where is" in q_lower:
+            idx = q_lower.find("where is")
+            target = question[idx + len("where is"):].strip().strip("?")
+        else:
+            target = question
+            for token in ["defined", "where is"]:
+                target = re.sub(token, "", target, flags=re.IGNORECASE)
+            target = target.strip().strip("?")
+        target_lower = target.lower()
+        for text, path in [(arch_text, "vault/architecture/ARCHITECTURE.md"),
+                           (decisions_text, "vault/architecture/DECISIONS.md")]:
+            for level, heading in _headings(text):
+                if target_lower and target_lower in heading.lower():
+                    heading_line = f"{'#' * level} {heading}"
+                    excerpt = _excerpt_under_heading(text, heading_line)
+                    return {
+                        "answer": f"{heading} is defined in {path}.",
+                        "citations": [
+                            {
+                                "path": path,
+                                "anchor": _anchor_for_heading(heading),
+                                "quote": excerpt or heading,
+                            }
+                        ]
+                    }
+
+        headings = [h for _, h in _headings(arch_text)] + [h for _, h in _headings(decisions_text)]
+        return {
+            "answer": "Not found. Closest headings: " + ", ".join(headings[:5]),
+            "citations": []
+        }
+
+    return {"answer": "Not found", "citations": []}
