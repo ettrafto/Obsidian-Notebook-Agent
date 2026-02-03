@@ -94,6 +94,108 @@ def _excerpt_under_heading(text: str, heading: str) -> str:
             break
     return " ".join(excerpt_lines).strip()
 
+def _append_maintenance(entry: str):
+    maintenance_path = _ensure_inside_vault(Path("system/maintenance.md"))
+    maintenance_path.parent.mkdir(parents=True, exist_ok=True)
+    if maintenance_path.exists():
+        existing = maintenance_path.read_text(encoding="utf-8")
+    else:
+        existing = "# Maintenance Log\n\n"
+    maintenance_path.write_text(existing + entry, encoding="utf-8")
+
+
+def _contract_check_report() -> str:
+    findings = []
+    suggested = []
+    has_fail = False
+
+    allowed_dirs = {
+        "architecture",
+        "planning",
+        "devlog",
+        "contracts",
+        "system",
+        "inbox",
+        "projects",
+        "tasks",
+        "explainers",
+    }
+
+    actual_dirs = [p.name for p in VAULT_PATH.iterdir() if p.is_dir()]
+    unknown_dirs = sorted([d for d in actual_dirs if d not in allowed_dirs])
+    if unknown_dirs:
+        has_fail = True
+        findings.append(f"[FAIL] Unknown top-level directories: {', '.join(unknown_dirs)}")
+        suggested.append("Update VAULT_CONTRACT.md or remove unknown directories")
+    else:
+        findings.append("[PASS] Top-level vault directories match allowed list")
+
+    required_files = [
+        "architecture/ARCHITECTURE.md",
+        "architecture/DECISIONS.md",
+        "planning/masterplan.md",
+        "planning/progress.md",
+        "planning/now.md",
+        "contracts/VAULT_CONTRACT.md",
+        "contracts/API_CONTRACT.md",
+        "contracts/GIT_CONTRACT.md",
+    ]
+    for rel in required_files:
+        p = _ensure_inside_vault(Path(rel))
+        if p.exists():
+            findings.append(f"[PASS] Required file exists: vault/{rel}")
+        else:
+            has_fail = True
+            findings.append(f"[FAIL] Missing required file: vault/{rel}")
+            suggested.append(f"Create vault/{rel}")
+
+    now_path = _ensure_inside_vault(Path("planning/now.md"))
+    if now_path.exists():
+        findings.append("[PASS] now.md exists")
+    else:
+        has_fail = True
+        findings.append("[FAIL] now.md missing")
+        suggested.append("Create vault/planning/now.md")
+
+    masterplan_path = _ensure_inside_vault(Path("planning/masterplan.md"))
+    if masterplan_path.exists():
+        masterplan_text = masterplan_path.read_text(encoding="utf-8")
+        matches = re.findall(r"^- \[[ xX]\] \([A-Z0-9-]+\) ", masterplan_text, flags=re.M)
+        if len(matches) >= 5:
+            findings.append("[PASS] masterplan.md has at least 5 valid task lines")
+        else:
+            has_fail = True
+            findings.append("[FAIL] masterplan.md has fewer than 5 valid task lines")
+            suggested.append("Add more tasks with IDs to masterplan.md")
+    else:
+        has_fail = True
+        findings.append("[FAIL] masterplan.md missing")
+        suggested.append("Create vault/planning/masterplan.md")
+
+    current_month = datetime.now().strftime("%Y-%m")
+    devlog_path = _ensure_inside_vault(Path(f"devlog/{current_month}.md"))
+    if devlog_path.exists():
+        findings.append(f"[PASS] Devlog exists for {current_month}")
+    else:
+        has_fail = True
+        findings.append(f"[FAIL] Devlog missing for {current_month}")
+        suggested.append(f"Create vault/devlog/{current_month}.md")
+
+    status = "FAIL" if has_fail else "PASS"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    report_lines = [
+        f"\n## {now} — Contract Check",
+        f"Status: {status}",
+        "Findings:",
+    ]
+    report_lines.extend([f"- {item}" for item in findings])
+    report_lines.append("Suggested Fixes:")
+    if suggested:
+        report_lines.extend([f"- {item}" for item in suggested])
+    else:
+        report_lines.append("- None")
+    return "\n".join(report_lines) + "\n"
+
 
 @app.get("/health")
 def health():
@@ -126,6 +228,11 @@ def command(req: Command):
     # MVP behavior: write a simple report note + log.
     text = req.text or ""
     stripped = text.lstrip()
+    if stripped.lower() == "contract check":
+        report = _contract_check_report()
+        _append_maintenance(report)
+        _log("CONTRACT_CHECK " + ("FAIL" if "Status: FAIL" in report else "PASS"))
+        return {"ok": True, "logged_to": "system/maintenance.md"}
     if stripped.lower().startswith("capture:"):
         payload = stripped[len("capture:"):].strip()
         if not payload:
