@@ -196,6 +196,145 @@ def _contract_check_report() -> str:
         report_lines.append("- None")
     return "\n".join(report_lines) + "\n"
 
+def _parse_task_line(line: str):
+    match = re.match(r"^- \[([ xX])\] \(([^)]+)\) (.+)$", line)
+    if not match:
+        return None
+    done = match.group(1).lower() == "x"
+    task_id = match.group(2).strip()
+    desc_tags = match.group(3).strip()
+    parts = desc_tags.split()
+    tags = []
+    while parts and parts[-1].startswith("#"):
+        tags.insert(0, parts.pop())
+    description = " ".join(parts).strip()
+    return {
+        "done": done,
+        "id": task_id,
+        "description": description,
+        "tags": tags,
+    }
+
+
+def _parse_tasks_from_text(text: str):
+    tasks = []
+    for line in text.splitlines():
+        parsed = _parse_task_line(line)
+        if parsed:
+            tasks.append(parsed)
+    return tasks
+
+
+def _parse_backlog_tasks(text: str):
+    lines = text.splitlines()
+    in_backlog = False
+    backlog_lines = []
+    for line in lines:
+        if line.strip().lower() == "## backlog (optional)":
+            in_backlog = True
+            continue
+        if in_backlog and line.startswith("## "):
+            break
+        if in_backlog:
+            backlog_lines.append(line)
+    return _parse_tasks_from_text("\n".join(backlog_lines))
+
+
+def _task_last_touched(progress_text: str):
+    last = {}
+    current_date = None
+    for line in progress_text.splitlines():
+        date_match = re.match(r"^## (\\d{4}-\\d{2}-\\d{2})", line.strip())
+        if date_match:
+            try:
+                current_date = datetime.strptime(date_match.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                current_date = None
+            continue
+        if current_date:
+            for task_id in re.findall(r"\\(([A-Z0-9-]+)\\)", line):
+                last[task_id] = current_date
+    return last
+
+
+def _write_tasks_summary():
+    masterplan_path = _ensure_inside_vault(Path("planning/masterplan.md"))
+    tasks_path = _ensure_inside_vault(Path("tasks/tasks.md"))
+    progress_path = _ensure_inside_vault(Path("planning/progress.md"))
+
+    masterplan_text = masterplan_path.read_text(encoding="utf-8") if masterplan_path.exists() else ""
+    backlog_text = tasks_path.read_text(encoding="utf-8") if tasks_path.exists() else ""
+    progress_text = progress_path.read_text(encoding="utf-8") if progress_path.exists() else ""
+
+    tasks = [t for t in _parse_tasks_from_text(masterplan_text) if not t["done"]]
+    tasks += [t for t in _parse_backlog_tasks(backlog_text) if not t["done"]]
+
+    last_touched = _task_last_touched(progress_text) if progress_text else {}
+    today = datetime.now().date()
+
+    def format_task(t):
+        tag_str = (" " + " ".join(t["tags"])) if t["tags"] else ""
+        return f"- [ ] ({t['id']}) {t['description']}{tag_str}"
+
+    blockers = []
+    needs_design = []
+    needs_testing = []
+    other = []
+
+    for t in tasks:
+        tags = set(t["tags"])
+        if "#blocker" in tags:
+            blockers.append(t)
+        elif "#needs-design" in tags:
+            needs_design.append(t)
+        elif "#needs-testing" in tags:
+            needs_testing.append(t)
+        else:
+            other.append(t)
+
+    stale = []
+    for t in tasks:
+        touched = last_touched.get(t["id"])
+        if not touched:
+            stale.append(t)
+        else:
+            if (today - touched).days > 14:
+                stale.append(t)
+
+    def section_lines(items):
+        if not items:
+            return ["- None"]
+        return [format_task(t) for t in items]
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    summary_lines = [
+        "# Tasks Summary",
+        "",
+        "## Blockers",
+        *section_lines(blockers),
+        "",
+        "## Needs Design",
+        *section_lines(needs_design),
+        "",
+        "## Needs Testing",
+        *section_lines(needs_testing),
+        "",
+        "## Other Open Tasks",
+        *section_lines(other),
+        "",
+        "## Stale (14+ days)",
+        *section_lines(stale),
+        "",
+        "## Notes",
+        f"- Generated: {now}",
+        "",
+    ]
+
+    summary_path = _ensure_inside_vault(Path("tasks/tasks-summary.md"))
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
+    return "tasks/tasks-summary.md"
+
 
 @app.get("/health")
 def health():
@@ -233,6 +372,10 @@ def command(req: Command):
         _append_maintenance(report)
         _log("CONTRACT_CHECK " + ("FAIL" if "Status: FAIL" in report else "PASS"))
         return {"ok": True, "logged_to": "system/maintenance.md"}
+    if stripped.lower() == "tasks":
+        written_to = _write_tasks_summary()
+        _log("TASKS_SUMMARY " + written_to)
+        return {"ok": True, "written_to": written_to}
     if stripped.lower().startswith("capture:"):
         payload = stripped[len("capture:"):].strip()
         if not payload:
