@@ -7,6 +7,7 @@ No AI, no network, no shell commands.
 - `status.js` — regenerates `vault/planning/now.md`
 - `contract-check.js` — appends to `vault/system/maintenance.md`
 - `weekly-maintenance.js` — appends to `vault/system/weekly-report.md` and `vault/system/maintenance.md`
+- `import/validate-draft.js` — validates draft headers in `vault/inbox/`
 
 ## Usage
 From repo root:
@@ -14,10 +15,12 @@ From repo root:
 npm run atlas:status
 npm run atlas:contract-check
 npm run atlas:weekly
+npm run atlas:validate-draft -- vault/inbox/ARCH-DRAFT-YYYY-MM-DD-slug.md
 ```
 
 ## Manual Verification Checklist
 1) Run `npm run atlas:status` → confirm `now.md` overwritten and valid headings.
 2) Run `npm run atlas:contract-check` → confirm `maintenance.md` appended.
 3) Run `npm run atlas:weekly` → confirm `weekly-report.md` appended + `maintenance.md` appended.
-4) Confirm no other files were modified.
+4) Run `npm run atlas:validate-draft -- <path-to-draft>` → confirm PASS/FAIL output.
+5) Confirm no other files were modified.
