@@ -40,6 +40,9 @@ class Command(BaseModel):
 class Query(BaseModel):
     question: str
 
+class FindQuery(BaseModel):
+    term: str
+
 
 def _anchor_for_heading(heading: str) -> str:
     slug = heading.strip().lower()
@@ -336,6 +339,111 @@ def _write_tasks_summary():
     return "tasks/tasks-summary.md"
 
 
+def _nearest_heading(lines, idx):
+    for i in range(idx, -1, -1):
+        line = lines[i].strip()
+        if line.startswith("#"):
+            return line
+    return ""
+
+
+def _excerpt(lines, idx, term):
+    start = max(0, idx - 1)
+    end = min(len(lines), idx + 2)
+    snippet = "\n".join(lines[start:end]).strip()
+    return snippet or term
+
+
+def _search_files(term: str):
+    term_lower = term.lower()
+    root = Path(".").resolve()
+    md_files = list(root.rglob("*.md"))
+    extra_files = []
+    for name in ["docker-compose.yml", "docker-compose.yaml"]:
+        p = root / name
+        if p.exists():
+            extra_files.append(p)
+    for ext in ["*.yml", "*.yaml", "*.json"]:
+        extra_files.extend([p for p in root.glob(ext) if p.is_file()])
+
+    candidates = md_files + extra_files
+    results = []
+    seen = set()
+
+    for path in candidates:
+        rel_path = path.relative_to(root).as_posix()
+        if rel_path in seen:
+            continue
+        seen.add(rel_path)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        lines = text.splitlines()
+
+        filename_hit = term_lower in path.name.lower()
+        if filename_hit:
+            results.append({
+                "path": rel_path,
+                "anchor": "",
+                "quote": path.name,
+                "priority": 1,
+                "line_idx": 0,
+            })
+
+        for idx, line in enumerate(lines):
+            line_lower = line.lower()
+            if line_lower.startswith("#") and term_lower in line_lower:
+                heading = _nearest_heading(lines, idx)
+                results.append({
+                    "path": rel_path,
+                    "anchor": _anchor_for_heading(heading.lstrip("# ").strip()) if heading else "",
+                    "quote": line.strip(),
+                    "priority": 2,
+                    "line_idx": idx,
+                })
+            if term_lower in line_lower:
+                heading = _nearest_heading(lines, idx)
+                results.append({
+                    "path": rel_path,
+                    "anchor": _anchor_for_heading(heading.lstrip("# ").strip()) if heading else "",
+                    "quote": _excerpt(lines, idx, line.strip()),
+                    "priority": 3,
+                    "line_idx": idx,
+                })
+
+    results.sort(key=lambda r: (r["priority"], r["path"], r["line_idx"]))
+    top = results[:10]
+    for r in top:
+        r.pop("priority", None)
+        r.pop("line_idx", None)
+    return top
+
+
+def _write_search_notes(term: str, results):
+    search_path = _ensure_inside_vault(Path("system/search-notes.md"))
+    search_path.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        "# Search Notes (Generated)",
+        "",
+        "This file is overwritten on each search.",
+        "",
+        f"## {now} — find: {term}",
+        "### Results",
+    ]
+    if results:
+        for i, r in enumerate(results, start=1):
+            anchor = r["anchor"] if r["anchor"] else "(no heading)"
+            lines.append(f"{i}) **{r['path']}** — nearest heading: `{anchor}`")
+            lines.append(f"   > {r['quote']}")
+    else:
+        lines.append("No matches found.")
+        lines.append("Closest headings: (TODO)")
+    lines.append("")
+    search_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "vault": str(VAULT_PATH)}
@@ -458,3 +566,13 @@ def query(req: Query):
         }
 
     return {"answer": "Not found", "citations": []}
+
+
+@app.post("/find")
+def find(req: FindQuery):
+    term = (req.term or "").strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Search term is required")
+    results = _search_files(term)
+    _write_search_notes(term, results)
+    return {"term": term, "results": results}
