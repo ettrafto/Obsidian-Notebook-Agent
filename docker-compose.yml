@@ -1,0 +1,17 @@
+services:
+  atlas-agent:
+    build: ./agent
+    container_name: atlas-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1111:8080"
+
+    volumes:
+      - /opt/atlas-agent/vault:/vault
+      - /opt/atlas-agent/logs:/logs
+    networks:
+      - edge-tunnel
+
+networks:
+  edge-tunnel:
+    external: true

@@ -1,0 +1,66 @@
+########################################
+# Obsidian (volatile state only)
+########################################
+.obsidian/workspace*
+.obsidian/cache/
+.obsidian/graph.json
+.obsidian/backlink.json
+.obsidian/recent.json
+
+# Plugin data that should NOT be versioned
+.obsidian/plugins/**/data.json
+.obsidian/plugins/**/cache/
+
+########################################
+# OS / Editor junk
+########################################
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+########################################
+# Python / Agent runtime
+########################################
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+
+########################################
+# Docker / runtime artifacts
+########################################
+*.pid
+docker-compose.override.yml
+
+########################################
+# Logs (runtime only)
+########################################
+logs/
+*.log
+
+########################################
+# Cloudflare / secrets
+########################################
+cert.pem
+*.json
+
+########################################
+# Node / tooling (future-proofing)
+########################################
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+########################################
+# Temporary / scratch
+########################################
+tmp/
+temp/
+.cache/
+
