@@ -6,6 +6,7 @@
     "atlas:status": "node agent/scripts/status.js",
     "atlas:contract-check": "node agent/scripts/contract-check.js",
     "atlas:weekly": "node agent/scripts/weekly-maintenance.js",
-    "atlas:validate-draft": "node agent/scripts/import/validate-draft.js"
+    "atlas:validate-draft": "node agent/scripts/import/validate-draft.js",
+    "atlas:import-arch": "node agent/scripts/import/import-arch.js"
   }
 }

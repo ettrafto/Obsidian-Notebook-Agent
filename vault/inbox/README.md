@@ -39,3 +39,9 @@ A draft is done when:
 - Content is merged into canonical docs
 - Devlog notes the merge (Tool 3)
 - Weekly maintenance/drift passes (Tool 8)
+
+## Automatic Import (Optional)
+Use `npm run atlas:import-arch -- vault/inbox/ARCH-DRAFT-YYYY-MM-DD-<slug>.md` to:
+- validate the draft header
+- scaffold ADRs if required
+- append a maintenance log entry
